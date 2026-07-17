@@ -79,39 +79,71 @@ namespace RiskiApp
 
         private void button_Сохранить_РискиДействия_Click(object sender, EventArgs e)
         {
-            this.рискиДействияTableAdapter.Update(this.dataSet1.РискиДействия);
-            this.рискиДействияTableAdapter.Fill(this.dataSet1.РискиДействия);
+            // Сначала сохраняем все таблицы, на которые ссылается "РискиДействия" (через FK).
+            // Это исключает попытку записать в БД ссылку на несохранённую (существующую только
+            // в памяти программы) запись - иначе SQL Server вернёт ошибку внешнего ключа и приложение упадёт.
+            if (!SafeUpdate(() => периодыTableAdapter.Update(dataSet1.Периоды), "Периоды")) return;
+            if (!SaveПодразделения()) return;
+            if (!SaveПользователи()) return;
+            if (!SafeUpdate(() => процессыTableAdapter.Update(dataSet1.Процессы), "Процессы")) return;
+            if (!SafeUpdate(() => типыРисковTableAdapter.Update(dataSet1.ТипыРисков), "Типы рисков")) return;
+            if (!SafeUpdate(() => SaveМероприятияAndRemapIds(), "Мероприятия")) return;
+            if (!SaveРиски()) return;
 
+            if (!SafeUpdate(() => рискиДействияTableAdapter.Update(dataSet1.РискиДействия), "Риски и действия")) return;
+            SafeUpdate(() => рискиДействияTableAdapter.Fill(dataSet1.РискиДействия), "Риски и действия");
         }
 
         private void button_Сохранить_Риски_Click(object sender, EventArgs e)
         {
-            this.рискиTableAdapter1.Update(this.dataSet1.Риски);
+            SaveРиски();
+        }
+
+        private bool SaveРиски()
+        {
+            // "Риски" ссылается на Мероприятия, Пользователи и ТипыРисков - сохраняем их первыми.
+            if (!SafeUpdate(() => SaveМероприятияAndRemapIds(), "Мероприятия")) return false;
+            if (!SaveПользователи()) return false;
+            if (!SafeUpdate(() => типыРисковTableAdapter.Update(dataSet1.ТипыРисков), "Типы рисков")) return false;
+            return SafeUpdate(() => рискиTableAdapter1.Update(dataSet1.Риски), "Риски");
         }
 
         private void button_Сохранить_ТипыРисков_Click(object sender, EventArgs e)
         {
-            this.типыРисковTableAdapter.Update(this.dataSet1.ТипыРисков);
+            SafeUpdate(() => типыРисковTableAdapter.Update(dataSet1.ТипыРисков), "Типы рисков");
         }
 
         private void button_Сохранить_Процессы_Click(object sender, EventArgs e)
         {
-            this.процессыTableAdapter.Update(this.dataSet1.Процессы);
+            SafeUpdate(() => процессыTableAdapter.Update(dataSet1.Процессы), "Процессы");
         }
 
         private void button_Сохранить_Периоды_Click(object sender, EventArgs e)
         {
-            this.периодыTableAdapter.Update(this.dataSet1.Периоды);
+            SafeUpdate(() => периодыTableAdapter.Update(dataSet1.Периоды), "Периоды");
         }
 
         private void button_Сохранить_Подразделения_Click(object sender, EventArgs e)
         {
-            this.подразделенияTableAdapter.Update(this.dataSet1.Подразделения);
+            SaveПодразделения();
+        }
+
+        private bool SaveПодразделения()
+        {
+            return SafeUpdate(() => подразделенияTableAdapter.Update(dataSet1.Подразделения), "Подразделения");
         }
 
         private void button_Сохранить_Пользователи_Click(object sender, EventArgs e)
         {
-            this.пользователиTableAdapter.Update(this.dataSet1.Пользователи);
+            SaveПользователи();
+        }
+
+        private bool SaveПользователи()
+        {
+            // "Пользователи" ссылается на "Подразделения" - сохраняем подразделения первыми,
+            // иначе временный (ещё не выданный БД) ID подразделения попадёт в БД как внешний ключ.
+            if (!SaveПодразделения()) return false;
+            return SafeUpdate(() => пользователиTableAdapter.Update(dataSet1.Пользователи), "Пользователи");
         }
 
         private void tabPage1_Click(object sender, EventArgs e)
@@ -121,7 +153,61 @@ namespace RiskiApp
 
         private void button_Сохранить_Мероприятия_Click(object sender, EventArgs e)
         {
-            this.мероприятияTableAdapter.Update(this.dataSet11.Мероприятия);
+            SafeUpdate(() => SaveМероприятияAndRemapIds(), "Мероприятия");
+        }
+
+        // Показывает понятное сообщение вместо падения программы при ошибке сохранения
+        // (например, если запись ссылается на несохранённые данные в связанной таблице).
+        private bool SafeUpdate(Action updateAction, string entityName)
+        {
+            try
+            {
+                updateAction();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Не удалось сохранить \"{entityName}\": {ex.Message}\n\n" +
+                    "Возможно, запись ссылается на ещё не сохранённые данные в связанной таблице. " +
+                    "Сохраните сначала связанные данные и повторите попытку.",
+                    "Ошибка сохранения",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
+        // "Мероприятия" хранится в отдельном экземпляре набора данных (dataSet11), поэтому связи
+        // с "Риски"/"РискиДействия" (dataSet1) не отслеживаются автоматически. После сохранения
+        // новых мероприятий их временные ID заменяются на настоящие ID из БД - переносим эти
+        // изменения вручную во все строки, которые на них ссылались.
+        private void SaveМероприятияAndRemapIds()
+        {
+            var addedRows = dataSet11.Мероприятия.Rows
+                .Cast<DataSet1.МероприятияRow>()
+                .Where(r => r.RowState == DataRowState.Added)
+                .Select(r => new { Row = r, OldId = r.ID_Меропрития })
+                .ToList();
+
+            мероприятияTableAdapter.Update(dataSet11.Мероприятия);
+
+            foreach (var item in addedRows)
+            {
+                int newId = item.Row.ID_Меропрития;
+                if (newId == item.OldId) continue;
+
+                foreach (DataSet1.РискиRow r in dataSet1.Риски.Rows)
+                {
+                    if (!r.IsID_МероприятияNull() && r.ID_Мероприятия == item.OldId)
+                        r.ID_Мероприятия = newId;
+                }
+                foreach (DataSet1.РискиДействияRow r in dataSet1.РискиДействия.Rows)
+                {
+                    if (!r.IsID_МероприятияNull() && r.ID_Мероприятия == item.OldId)
+                        r.ID_Мероприятия = newId;
+                }
+            }
         }
 
         private void dataGridView_Риски_CellContentClick(object sender, DataGridViewCellEventArgs e)
