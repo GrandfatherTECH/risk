@@ -20,6 +20,36 @@ namespace RiskiApp
             CenterToScreen();
             dataGridView_РискиДействия.CellFormatting += dataGridView_РискиДействия_CellFormatting;
             dataGridView_Риски.CellFormatting += dataGridView_Риски_CellFormatting;
+
+            // По умолчанию DataGridView на невалидную ячейку/строку показывает системный диалог
+            // с текстом исключения и не даёт покинуть строку, пока она невалидна - из-за этого
+            // одно и то же сообщение всплывает раз за разом при каждой попытке уйти с ячейки.
+            // Обрабатываем DataError сами: показываем понятное сообщение один раз и отменяем
+            // редактирование, возвращая ячейку к прежнему значению, чтобы диалог не повторялся.
+            foreach (var grid in new[]
+            {
+                dataGridView_РискиДействия, dataGridView_Риски, dataGridView_ТипыРисков,
+                dataGridView_Процессы, dataGridView_Периоды, dataGridView_Подразделения,
+                dataGridView_Пользователи, dataGridView_Мероприятия
+            })
+            {
+                grid.DataError += dataGridView_DataError;
+            }
+        }
+
+        private void dataGridView_DataError(object sender, DataGridViewDataErrorEventArgs e)
+        {
+            e.ThrowException = false;
+            e.Cancel = true;
+
+            if (e.Exception != null)
+            {
+                MessageBox.Show(
+                    "Не удалось сохранить введённые данные: " + e.Exception.Message,
+                    "Ошибка ввода данных",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
         }
 
         private void splitContainer1_Panel1_Paint(object sender, PaintEventArgs e)
