@@ -561,160 +561,150 @@ namespace RiskiApp
 
         }
 
-        private void dataGridView_РискиДействия_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        // Единая шкала уровня риска. Раньше она была задана трижды и трижды по-разному
+        // (0-3/3-6/6+, 0-3/3-7/7+ и 1-2/2-4/4+), поэтому один и тот же уровень мог
+        // получить разный цвет в разных таблицах. Оставлена шкала вычисляемых столбцов -
+        // именно она была видна пользователю.
+        private static readonly Color РискНизкий = Color.FromArgb(198, 239, 206);
+        private static readonly Color РискСредний = Color.FromArgb(255, 235, 156);
+        private static readonly Color РискВысокий = Color.FromArgb(255, 199, 206);
+
+        private static bool ПолучитьУровеньРиска(object value, out double уровень)
         {
-            // Проверяем, что ячейка находится в одном из нужных столбцов
-            if (e.ColumnIndex == уровеньРискаДоМПDataGridViewTextBoxColumn.Index ||
-                e.ColumnIndex == уровеньРискаПослеМПDataGridViewTextBoxColumn.Index)
-            {
-                // Проверяем, что значение ячейки является числом
-                if (e.Value is int || e.Value is double || e.Value is decimal)
-                {
-                    double value = Convert.ToDouble(e.Value);
+            уровень = 0;
 
-                    if (value > 0 && value < 3)
-                    {
-                        e.CellStyle.BackColor = Color.Green;
-                    }
-                    else if (value >= 3 && value < 6)
-                    {
-                        e.CellStyle.BackColor = Color.Yellow;
-                    }
-                    else if (value >= 6)
-                    {
-                        e.CellStyle.BackColor = Color.Red;
-                    }
-                    else
-                    {
-                        // Обработка значений, которые не попадают ни в одну из категорий (например, null или отрицательные)
-                        e.CellStyle.BackColor = Color.White; // Или другой цвет по умолчанию
-                    }
-                }
-                else
-                {
-                    // Обработка нечисловых значений
-                    e.CellStyle.BackColor = Color.White; // Или другой цвет по умолчанию
-                }
+            // DBNull - не то же самое, что null: старая проверка "val != null" его пропускала,
+            // затем DBNull.ToString() давал пустую строку, double.TryParse не срабатывал,
+            // и ячейка оставалась без текста и без цвета.
+            if (value == null || value == DBNull.Value) return false;
+
+            if (value is int || value is short || value is long ||
+                value is double || value is float || value is decimal)
+            {
+                уровень = Convert.ToDouble(value);
+                return true;
             }
 
-            if (this.dataGridView_РискиДействия.Columns[e.ColumnIndex].Name == "УровеньРискаДоМПВычисл")
-            {
-                // Получаем значение из соседнего столбца с числом
-                var val = dataGridView_РискиДействия.Rows[e.RowIndex].Cells["уровеньРискаДоМПDataGridViewTextBoxColumn"].Value;
+            // Строковое значение может прийти как из БД, так и из редактируемой ячейки.
+            // Разделителем дробной части может быть и точка, и запятая - зависит от локали,
+            // поэтому пробуем текущую культуру, а затем инвариантную.
+            string text = value.ToString().Trim();
+            if (text.Length == 0) return false;
 
-                if (val != null && double.TryParse(val.ToString(), out double riskValue))
-                {
-                    // Добавляем условия
-                    if (riskValue >= 1 && riskValue <= 2)
-                    {
-                        e.Value = "Низкий";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Green;
-                    }
-                    if (riskValue > 2 && riskValue <= 4)
-                    {
-                        e.Value = "Средний";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Yellow;
-                    }
-                    if (riskValue > 4)
-                    {
-                        e.Value = "Высокий";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Red;
-                    }
-                }
-            }
-            if (this.dataGridView_РискиДействия.Columns[e.ColumnIndex].Name == "уровеньРискаПослеМПВычисл")
-            {
-                // Получаем значение из соседнего столбца с числом
-                var val = dataGridView_РискиДействия.Rows[e.RowIndex].Cells["уровеньРискаПослеМПDataGridViewTextBoxColumn"].Value;
+            return double.TryParse(text, System.Globalization.NumberStyles.Any,
+                       System.Globalization.CultureInfo.CurrentCulture, out уровень)
+                || double.TryParse(text.Replace(',', '.'), System.Globalization.NumberStyles.Any,
+                       System.Globalization.CultureInfo.InvariantCulture, out уровень);
+        }
 
-                if (val != null && double.TryParse(val.ToString(), out double riskValue))
-                {
-                    // Добавляем условия
-                    if (riskValue >= 1 && riskValue <= 2)
-                    {
-                        e.Value = "Низкий";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Green;
-                    }
-                    if (riskValue > 2 && riskValue <= 4)
-                    {
-                        e.Value = "Средний";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Yellow;
-                    }
-                    if (riskValue > 4)
-                    {
-                        e.Value = "Высокий";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Red;
-                    }
-                }
+        private static Color ЦветУровняРиска(double уровень)
+        {
+            if (уровень <= 2) return РискНизкий;
+            if (уровень <= 4) return РискСредний;
+            return РискВысокий;
+        }
+
+        private static string НазваниеУровняРиска(double уровень)
+        {
+            if (уровень <= 2) return "Низкий";
+            if (уровень <= 4) return "Средний";
+            return "Высокий";
+        }
+
+        // Для каждого столбца, который должен подсвечиваться, - имя столбца, где лежит само
+        // число. Для числовых столбцов это они сами, для вычисляемых (несвязанных) - соседний
+        // скрытый столбец-источник (столбцы прячутся в Form_Главная_Load).
+        private static string СтолбецИсточникУровня(string имяСтолбца)
+        {
+            switch (имяСтолбца)
+            {
+                case "уровеньРискаДоМПDataGridViewTextBoxColumn":
+                case "уровеньРискаПослеМПDataGridViewTextBoxColumn":
+                case "dataGridViewTextBoxColumn7":
+                    return имяСтолбца;
+                case "УровеньРискаДоМПВычисл":
+                    return "уровеньРискаДоМПDataGridViewTextBoxColumn";
+                case "уровеньРискаПослеМПВычисл":
+                    return "уровеньРискаПослеМПDataGridViewTextBoxColumn";
+                case "УровеньРискаВычисл":
+                    return "dataGridViewTextBoxColumn7";
+                default:
+                    return null;
             }
         }
+
+        // Единая точка расчёта уровня для ячейки: ею пользуются и отрисовка, и экспорт,
+        // поэтому выгрузка гарантированно совпадает с тем, что видно на экране.
+        private static bool ПолучитьУровеньЯчейки(DataGridView grid, int rowIndex, int columnIndex,
+            out double уровень)
+        {
+            уровень = 0;
+
+            string источник = СтолбецИсточникУровня(grid.Columns[columnIndex].Name);
+            if (источник == null) return false;
+
+            var столбец = grid.Columns[источник];
+            if (столбец == null) return false;
+
+            return ПолучитьУровеньРиска(grid.Rows[rowIndex].Cells[столбец.Index].Value, out уровень);
+        }
+
+        private static bool ПолучитьЦветЯчейки(DataGridView grid, int rowIndex, int columnIndex,
+            out Color цвет)
+        {
+            цвет = Color.Empty;
+
+            if (rowIndex < 0 || columnIndex < 0) return false;
+            if (!ПолучитьУровеньЯчейки(grid, rowIndex, columnIndex, out double уровень)) return false;
+
+            цвет = ЦветУровняРиска(уровень);
+            return true;
+        }
+
+        private static void ОформитьЯчейкуУровня(DataGridView grid,
+            DataGridViewCellFormattingEventArgs e)
+        {
+            if (!ПолучитьУровеньЯчейки(grid, e.RowIndex, e.ColumnIndex, out double уровень)) return;
+
+            e.CellStyle.BackColor = ЦветУровняРиска(уровень);
+
+            // Вычисляемые столбцы не связаны с данными - текст им задаём здесь.
+            if (grid.Columns[e.ColumnIndex].DataPropertyName.Length == 0)
+            {
+                e.Value = НазваниеУровняРиска(уровень);
+                e.FormattingApplied = true;
+            }
+        }
+
+        private void dataGridView_РискиДействия_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            // Строка новой записи и служебные индексы: обращение к Rows[-1] здесь роняло
+            // приложение, а исключение из CellFormatting перехватить уже некому - DataError
+            // на форматирование не распространяется.
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            try
+            {
+                ОформитьЯчейкуУровня(dataGridView_РискиДействия, e);
+            }
+            catch
+            {
+                // Оформление не должно ронять приложение: в худшем случае ячейка
+                // останется неокрашенной.
+            }
+        }
+
         private void dataGridView_Риски_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
         {
-            // Проверяем, что ячейка находится в нужном столбце
-            if (e.ColumnIndex == dataGridViewTextBoxColumn7.Index)
-            {
-                // Проверяем, что значение ячейки является числом
-                if (e.Value is int || e.Value is double || e.Value is decimal)
-                {
-                    double value = Convert.ToDouble(e.Value);
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
-                    if (value > 0 && value < 3)
-                    {
-                        e.CellStyle.BackColor = Color.Green;
-                    }
-                    else if (value >= 3 && value < 7)
-                    {
-                        e.CellStyle.BackColor = Color.Yellow;
-                    }
-                    else if (value >= 7)
-                    {
-                        e.CellStyle.BackColor = Color.Red;
-                    }
-                    else
-                    {
-                        // Обработка значений, которые не попадают ни в одну из категорий (например, null или отрицательные)
-                        e.CellStyle.BackColor = Color.White; // Или другой цвет по умолчанию
-                    }
-                }
-                else
-                {
-                    // Обработка нечисловых значений
-                    e.CellStyle.BackColor = Color.White; // Или другой цвет по умолчанию
-                }
+            try
+            {
+                ОформитьЯчейкуУровня(dataGridView_Риски, e);
             }
-            if (this.dataGridView_Риски.Columns[e.ColumnIndex].Name == "УровеньРискаВычисл")
+            catch
             {
-                // Получаем значение из соседнего столбца с числом
-                var val = dataGridView_Риски.Rows[e.RowIndex].Cells["dataGridViewTextBoxColumn7"].Value;
-
-                if (val != null && double.TryParse(val.ToString(), out double riskValue))
-                {
-                    // Добавляем условия
-                    if (riskValue >= 1 && riskValue <= 2)
-                    {
-                        e.Value = "Низкий";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Green;
-                    }
-                    if (riskValue > 2 && riskValue <= 4)
-                    {
-                        e.Value = "Средний";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Yellow;
-                    }
-                    if (riskValue > 4)
-                    {
-                        e.Value = "Высокий";
-                        e.FormattingApplied = true;
-                        e.CellStyle.BackColor = Color.Red;
-                    }
-                }
+                // См. комментарий выше.
             }
         }
 
@@ -875,6 +865,18 @@ namespace RiskiApp
                                     currentCell.Value = cellValue;
                                     currentCell.Style.Alignment.WrapText=true;
                                     currentCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+
+                                    // Переносим подсветку уровня риска. Раньше экспорт копировал
+                                    // только текст, поэтому выгрузка всегда была белой независимо
+                                    // от того, что видно на экране. Цвет считаем той же функцией,
+                                    // что и при отрисовке: InheritedStyle здесь не подходит - он
+                                    // не знает про CellFormatting, который работает только при
+                                    // выводе на экран.
+                                    if (ПолучитьЦветЯчейки(dgv, i, j, out Color backColor))
+                                    {
+                                        currentCell.Style.Fill.BackgroundColor = XLColor.FromArgb(
+                                            backColor.R, backColor.G, backColor.B);
+                                    }
                                 }
                             }
 
