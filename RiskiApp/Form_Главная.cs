@@ -22,11 +22,7 @@ namespace RiskiApp
             dataGridView_Риски.CellFormatting += dataGridView_Риски_CellFormatting;
 
             // По умолчанию DataGridView на невалидную ячейку/строку показывает системный диалог
-            // с текстом исключения и не даёт покинуть строку, пока она невалидна. Грид может
-            // повторно пытаться провалидировать одну и ту же "плохую" строку при каждой попытке
-            // уйти с неё - если на это реагировать модальным MessageBox (как было раньше), диалоги
-            // накладываются друг на друга и приложением становится невозможно пользоваться.
-            // Поэтому просто гасим исключение: строка сама подсвечивается стандартным для
+            // с текстом исключения. Гасим исключение: строка сама подсвечивается стандартным для
             // DataGridView красным значком ошибки в начале строки (наведение на него показывает
             // текст ошибки) - без всплывающих окон.
             foreach (var grid in new[]
@@ -40,16 +36,54 @@ namespace RiskiApp
             }
         }
 
+        // Защита от повторного входа: любое действие над гридом внутри обработчика DataError
+        // (CancelEdit, изменение значения ячейки, InvalidateRow) само способно вызвать новый
+        // DataError. Без флага это даёт бесконечную рекурсию - именно она выглядела как
+        // "программа отвечает, но в интерфейсе ничего сделать нельзя".
+        private bool _handlingDataError;
+
         private void dataGridView_DataError(object sender, DataGridViewDataErrorEventArgs e)
         {
             e.ThrowException = false;
-            e.Cancel = true;
 
-            // У ещё не сохранённой (новой) строки нет валидного "предыдущего" значения,
-            // поэтому отмены одной ячейки (e.Cancel) недостаточно - грид продолжит требовать
-            // корректную строку при каждой попытке уйти с неё. CancelEdit() полностью
-            // откатывает такую незавершённую строку/ячейку, чтобы работа с таблицей не блокировалась.
-            ((DataGridView)sender).CancelEdit();
+            // e.Cancel = true осмысленно только для контекста ввода/фиксации значения: он
+            // оставляет ячейку в режиме редактирования, чтобы пользователь исправил ввод.
+            // Для ошибок отображения/форматирования отмена ничего не чинит - грид просто
+            // пытается отрисовать ту же ячейку снова и снова и генерирует DataError без конца.
+            bool isEditContext =
+                (e.Context & (DataGridViewDataErrorContexts.Commit |
+                              DataGridViewDataErrorContexts.Parsing |
+                              DataGridViewDataErrorContexts.LeaveControl)) != 0;
+            e.Cancel = isEditContext;
+
+            if (_handlingDataError) return;
+            _handlingDataError = true;
+            try
+            {
+                // Типичный источник ошибки отображения - ячейка-справочник (ComboBox), в которой
+                // лежит ID, отсутствующий в списке: например, временный ID удалённой или уже
+                // перезаписанной записи. Такое значение невозможно отрисовать никогда, поэтому
+                // очищаем его один раз, вместо того чтобы бесконечно ловить одну и ту же ошибку.
+                var grid = (DataGridView)sender;
+                if (!isEditContext &&
+                    e.RowIndex >= 0 && e.RowIndex < grid.Rows.Count &&
+                    e.ColumnIndex >= 0 && e.ColumnIndex < grid.Columns.Count &&
+                    grid.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn &&
+                    !grid.Rows[e.RowIndex].IsNewRow)
+                {
+                    var cell = grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                    if (cell.Value != null && cell.Value != DBNull.Value)
+                        cell.Value = DBNull.Value;
+                }
+            }
+            catch
+            {
+                // Обработчик ошибок не должен сам ронять приложение.
+            }
+            finally
+            {
+                _handlingDataError = false;
+            }
         }
 
         private void splitContainer1_Panel1_Paint(object sender, PaintEventArgs e)
@@ -109,15 +143,16 @@ namespace RiskiApp
 
         private void button_Сохранить_РискиДействия_Click(object sender, EventArgs e)
         {
+            CommitPendingEdits();
             // Сначала сохраняем все таблицы, на которые ссылается "РискиДействия" (через FK).
             // Это исключает попытку записать в БД ссылку на несохранённую (существующую только
             // в памяти программы) запись - иначе SQL Server вернёт ошибку внешнего ключа и приложение упадёт.
-            if (!SafeUpdate(() => периодыTableAdapter.Update(dataSet1.Периоды), "Периоды")) return;
+            if (!SaveПериоды()) return;
             if (!SaveПодразделения()) return;
             if (!SaveПользователи()) return;
-            if (!SafeUpdate(() => процессыTableAdapter.Update(dataSet1.Процессы), "Процессы")) return;
-            if (!SafeUpdate(() => типыРисковTableAdapter.Update(dataSet1.ТипыРисков), "Типы рисков")) return;
-            if (!SafeUpdate(() => SaveМероприятияAndRemapIds(), "Мероприятия")) return;
+            if (!SaveПроцессы()) return;
+            if (!SaveТипыРисков()) return;
+            if (!SaveМероприятия()) return;
             if (!SaveРиски()) return;
 
             if (!SafeUpdate(() => рискиДействияTableAdapter.Update(dataSet1.РискиДействия), "Риски и действия")) return;
@@ -126,45 +161,60 @@ namespace RiskiApp
 
         private void button_Сохранить_Риски_Click(object sender, EventArgs e)
         {
+            CommitPendingEdits();
             SaveРиски();
         }
 
         private bool SaveРиски()
         {
             // "Риски" ссылается на Мероприятия, Пользователи и ТипыРисков - сохраняем их первыми.
-            if (!SafeUpdate(() => SaveМероприятияAndRemapIds(), "Мероприятия")) return false;
+            if (!SaveМероприятия()) return false;
             if (!SaveПользователи()) return false;
-            if (!SafeUpdate(() => типыРисковTableAdapter.Update(dataSet1.ТипыРисков), "Типы рисков")) return false;
-            return SafeUpdate(() => рискиTableAdapter1.Update(dataSet1.Риски), "Риски");
+            if (!SaveТипыРисков()) return false;
+            return SaveLookup(
+                "Риски",
+                () => рискиTableAdapter1.Update(dataSet1.Риски),
+                dataSet1.Риски, "ID_Риска",
+                dataSet1.РискиДействия.ID_РискаColumn);
         }
 
         private void button_Сохранить_ТипыРисков_Click(object sender, EventArgs e)
         {
-            SafeUpdate(() => типыРисковTableAdapter.Update(dataSet1.ТипыРисков), "Типы рисков");
+            CommitPendingEdits();
+            SaveТипыРисков();
         }
 
         private void button_Сохранить_Процессы_Click(object sender, EventArgs e)
         {
-            SafeUpdate(() => процессыTableAdapter.Update(dataSet1.Процессы), "Процессы");
+            CommitPendingEdits();
+            SaveПроцессы();
         }
 
         private void button_Сохранить_Периоды_Click(object sender, EventArgs e)
         {
-            SafeUpdate(() => периодыTableAdapter.Update(dataSet1.Периоды), "Периоды");
+            CommitPendingEdits();
+            SaveПериоды();
         }
 
         private void button_Сохранить_Подразделения_Click(object sender, EventArgs e)
         {
+            CommitPendingEdits();
             SaveПодразделения();
         }
 
         private bool SaveПодразделения()
         {
-            return SafeUpdate(() => подразделенияTableAdapter.Update(dataSet1.Подразделения), "Подразделения");
+            return SaveLookup(
+                "Подразделения",
+                () => подразделенияTableAdapter.Update(dataSet1.Подразделения),
+                dataSet1.Подразделения, "ID_Подразделения",
+                dataSet1.Пользователи.ID_ПодразделенияColumn,
+                dataSet1.РискиДействия.ID_ПодразделенияColumn);
         }
 
         private void button_Сохранить_Пользователи_Click(object sender, EventArgs e)
         {
+            CommitPendingEdits();
             SaveПользователи();
         }
 
@@ -173,7 +223,12 @@ namespace RiskiApp
             // "Пользователи" ссылается на "Подразделения" - сохраняем подразделения первыми,
             // иначе временный (ещё не выданный БД) ID подразделения попадёт в БД как внешний ключ.
             if (!SaveПодразделения()) return false;
-            return SafeUpdate(() => пользователиTableAdapter.Update(dataSet1.Пользователи), "Пользователи");
+            return SaveLookup(
+                "Пользователи",
+                () => пользователиTableAdapter.Update(dataSet1.Пользователи),
+                dataSet1.Пользователи, "ID_Пользователя",
+                dataSet1.Риски.ID_ПользователяColumn,
+                dataSet1.РискиДействия.ID_ПользователяColumn);
         }
 
         private void tabPage1_Click(object sender, EventArgs e)
@@ -183,7 +238,26 @@ namespace RiskiApp
 
         private void button_Сохранить_Мероприятия_Click(object sender, EventArgs e)
         {
-            SafeUpdate(() => SaveМероприятияAndRemapIds(), "Мероприятия");
+            CommitPendingEdits();
+            SaveМероприятия();
+        }
+
+        // Значение ячейки, которую пользователь редактирует прямо сейчас, ещё не перенесено
+        // в DataTable. Без принудительной фиксации нажатие "Сохранить" молча теряет последнюю
+        // введённую строку.
+        private void CommitPendingEdits()
+        {
+            foreach (var grid in new[]
+            {
+                dataGridView_РискиДействия, dataGridView_Риски, dataGridView_ТипыРисков,
+                dataGridView_Процессы, dataGridView_Периоды, dataGridView_Подразделения,
+                dataGridView_Пользователи, dataGridView_Мероприятия
+            })
+            {
+                grid.EndEdit();
+                var bindingSource = grid.DataSource as BindingSource;
+                if (bindingSource != null) bindingSource.EndEdit();
+            }
         }
 
         // Показывает понятное сообщение вместо падения программы при ошибке сохранения
@@ -208,36 +282,108 @@ namespace RiskiApp
             }
         }
 
-        // "Мероприятия" хранится в отдельном экземпляре набора данных (dataSet11), поэтому связи
-        // с "Риски"/"РискиДействия" (dataSet1) не отслеживаются автоматически. После сохранения
-        // новых мероприятий их временные ID заменяются на настоящие ID из БД - переносим эти
-        // изменения вручную во все строки, которые на них ссылались.
-        private void SaveМероприятияAndRemapIds()
+        // Новой записи справочника DataSet присваивает временный отрицательный ID
+        // (AutoIncrementSeed = -1, шаг -1). Настоящий ID выдаёт СУБД при сохранении, и адаптер
+        // подставляет его в родительскую строку через SCOPE_IDENTITY(). Но связи в DataSet
+        // созданы без ограничений (createConstraints: false), поэтому каскадного обновления
+        // внешних ключей нет: дочерние строки продолжают ссылаться на временный ID.
+        //
+        // Именно отсюда росли обе жалобы. Ссылка на несуществующий ID либо валит сохранение
+        // дочерней таблицы нарушением внешнего ключа, либо делает значение ячейки-справочника
+        // недопустимым - и тогда DataGridView генерирует DataError при каждой перерисовке,
+        // то есть бесконечно. Поэтому после сохранения справочника переносим новые ID во все
+        // ссылающиеся колонки вручную.
+        private bool SaveLookup(
+            string entityName,
+            Action updateAction,
+            DataTable parentTable,
+            string idColumnName,
+            params DataColumn[] childForeignKeys)
         {
-            var addedRows = dataSet11.Мероприятия.Rows
-                .Cast<DataSet1.МероприятияRow>()
+            var addedRows = parentTable.Rows
+                .Cast<DataRow>()
                 .Where(r => r.RowState == DataRowState.Added)
-                .Select(r => new { Row = r, OldId = r.ID_Меропрития })
+                .Select(r => new { Row = r, OldId = (int)r[idColumnName] })
                 .ToList();
 
-            мероприятияTableAdapter.Update(dataSet11.Мероприятия);
+            bool saved = SafeUpdate(updateAction, entityName);
 
+            // Перенос ID выполняем и после неудачного сохранения: DataAdapter пишет строки
+            // по одной, поэтому часть записей могла успеть получить настоящие ID до ошибки.
+            // Если оставить дочерние строки со ссылками на старые временные ID, вернётся
+            // та же самая бесконечная ошибка отображения.
             foreach (var item in addedRows)
             {
-                int newId = item.Row.ID_Меропрития;
+                if (item.Row.RowState == DataRowState.Detached ||
+                    item.Row.RowState == DataRowState.Deleted) continue;
+
+                int newId = (int)item.Row[idColumnName];
                 if (newId == item.OldId) continue;
 
-                foreach (DataSet1.РискиRow r in dataSet1.Риски.Rows)
+                foreach (var childColumn in childForeignKeys)
+                    ReplaceForeignKey(childColumn, item.OldId, newId);
+            }
+            return saved;
+        }
+
+        // Колонки ID в схеме помечены как ReadOnly, поэтому на время замены снимаем флаг.
+        private static void ReplaceForeignKey(DataColumn column, int oldId, int newId)
+        {
+            bool wasReadOnly = column.ReadOnly;
+            column.ReadOnly = false;
+            try
+            {
+                foreach (DataRow row in column.Table.Rows)
                 {
-                    if (!r.IsID_МероприятияNull() && r.ID_Мероприятия == item.OldId)
-                        r.ID_Мероприятия = newId;
-                }
-                foreach (DataSet1.РискиДействияRow r in dataSet1.РискиДействия.Rows)
-                {
-                    if (!r.IsID_МероприятияNull() && r.ID_Мероприятия == item.OldId)
-                        r.ID_Мероприятия = newId;
+                    if (row.RowState == DataRowState.Deleted ||
+                        row.RowState == DataRowState.Detached) continue;
+                    if (row.IsNull(column)) continue;
+                    if ((int)row[column] == oldId) row[column] = newId;
                 }
             }
+            finally
+            {
+                column.ReadOnly = wasReadOnly;
+            }
+        }
+
+        // "Мероприятия" загружается в отдельный экземпляр набора данных (dataSet11), поэтому
+        // ссылающиеся на него колонки берём явно из dataSet1.
+        private bool SaveМероприятия()
+        {
+            return SaveLookup(
+                "Мероприятия",
+                () => мероприятияTableAdapter.Update(dataSet11.Мероприятия),
+                dataSet11.Мероприятия, "ID_Меропрития",
+                dataSet1.Риски.ID_МероприятияColumn,
+                dataSet1.РискиДействия.ID_МероприятияColumn);
+        }
+
+        private bool SaveПериоды()
+        {
+            return SaveLookup(
+                "Периоды",
+                () => периодыTableAdapter.Update(dataSet1.Периоды),
+                dataSet1.Периоды, "ID_Периода",
+                dataSet1.РискиДействия.ID_ПериодаColumn);
+        }
+
+        private bool SaveПроцессы()
+        {
+            return SaveLookup(
+                "Процессы",
+                () => процессыTableAdapter.Update(dataSet1.Процессы),
+                dataSet1.Процессы, "ID_Процесса",
+                dataSet1.РискиДействия.ID_ПроцессаColumn);
+        }
+
+        private bool SaveТипыРисков()
+        {
+            return SaveLookup(
+                "Типы рисков",
+                () => типыРисковTableAdapter.Update(dataSet1.ТипыРисков),
+                dataSet1.ТипыРисков, "ID_ТипаРиска",
+                dataSet1.Риски.ID_ТипаРискаColumn);
         }
 
         private void dataGridView_Риски_CellContentClick(object sender, DataGridViewCellEventArgs e)
@@ -409,7 +555,7 @@ namespace RiskiApp
         {
             foreach (DataGridViewRow row in dataGridView_Риски.Rows)
             {
-                if (row.Cells["iDРискаDataGridViewTextBoxColumn2"].Value != null && (int)row.Cells["iDРискаDataGridViewTextBoxColumn2"].Value == riskId)
+                if (row.Cells["iDРискаDataGridViewTextBoxColumn2"].Value is int && (int)row.Cells["iDРискаDataGridViewTextBoxColumn2"].Value == riskId)
                 {
                     return row.Cells["dataGridViewTextBoxColumn1"].Value?.ToString() ?? "Неизвестный риск";
                 }
@@ -421,7 +567,7 @@ namespace RiskiApp
         {
             foreach (DataGridViewRow row in dataGridView_Мероприятия.Rows)
             {
-                if (row.Cells["iDМеропритияDataGridViewTextBoxColumn"].Value != null && (int)row.Cells["iDМеропритияDataGridViewTextBoxColumn"].Value == MeroId)
+                if (row.Cells["iDМеропритияDataGridViewTextBoxColumn"].Value is int && (int)row.Cells["iDМеропритияDataGridViewTextBoxColumn"].Value == MeroId)
                 {
                     return row.Cells["наименованиеМероприятияDataGridViewTextBoxColumn"].Value?.ToString() ?? "Неизвестное мероприятие";
                 }
@@ -450,9 +596,15 @@ namespace RiskiApp
                     // Проверяем, меньше ли разница 14 дней
                     if (difference.Days < 14 && difference.Days >= 0) // Добавляем проверку на неотрицательность
                     {
-                        // Получаем ID риска и мероприятия из текущей строки
-                        int riskId = (int)row.Cells["iDРискаDataGridViewTextBoxColumn"].Value;
-                        int MeroId = (int)row.Cells["idМероприятияDataGridViewTextBoxColumn"].Value;
+                        // В незаполненной или частично заполненной строке ссылки на риск и
+                        // мероприятие могут отсутствовать - прямое приведение к int уронило бы
+                        // программу, поэтому такие строки просто пропускаем.
+                        var riskCell = row.Cells["iDРискаDataGridViewTextBoxColumn"].Value;
+                        var meroCell = row.Cells["idМероприятияDataGridViewTextBoxColumn"].Value;
+                        if (!(riskCell is int) || !(meroCell is int)) continue;
+
+                        int riskId = (int)riskCell;
+                        int MeroId = (int)meroCell;
 
                         // Находим название риска и мероприятия
                         string riskName = GetRiskName(riskId);

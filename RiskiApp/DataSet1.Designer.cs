@@ -440,7 +440,7 @@ namespace RiskiApp {
             this.Relations.Add(this.relationМероприятия_РискиДействия);
             this.relationПроцессы_РискиДействия = new global::System.Data.DataRelation("Процессы_РискиДействия", new global::System.Data.DataColumn[] {
                         this.tableПроцессы.ID_ПроцессаColumn}, new global::System.Data.DataColumn[] {
-                        this.tableРискиДействия.ID_ПериодаColumn}, false);
+                        this.tableРискиДействия.ID_ПроцессаColumn}, false);
             this.Relations.Add(this.relationПроцессы_РискиДействия);
             this.relationFK_РискиДействия_Риски = new global::System.Data.DataRelation("FK_РискиДействия_Риски", new global::System.Data.DataColumn[] {
                         this.tableРиски.ID_РискаColumn}, new global::System.Data.DataColumn[] {
