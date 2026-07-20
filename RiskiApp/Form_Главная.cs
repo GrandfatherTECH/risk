@@ -153,18 +153,22 @@ namespace RiskiApp
         private void button_Сохранить_РискиДействия_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.РискиДействия)) return;
             _savedRowCount = 0;
-            // Сначала сохраняем все таблицы, на которые ссылается "РискиДействия" (через FK).
-            // Это исключает попытку записать в БД ссылку на несохранённую (существующую только
-            // в памяти программы) запись - иначе SQL Server вернёт ошибку внешнего ключа и приложение упадёт.
-            if (!SaveПериоды()) return;
-            if (!SaveПодразделения()) return;
-            if (!SaveПользователи()) return;
-            if (!SaveПроцессы()) return;
-            if (!SaveТипыРисков()) return;
-            if (!SaveМероприятия()) return;
-            if (!SaveРиски()) return;
+
+            if (!ValidateReferences("Риски и действия", dataSet1.РискиДействия,
+                new ReferenceCheck(dataSet1.РискиДействия.ID_ПериодаColumn, dataSet1.Периоды,
+                    "НаименованиеПериода", "Период", "Периоды"),
+                new ReferenceCheck(dataSet1.РискиДействия.ID_ПодразделенияColumn, dataSet1.Подразделения,
+                    "НаименованиеПодразделения", "Подразделение", "Подразделения"),
+                new ReferenceCheck(dataSet1.РискиДействия.ID_ПроцессаColumn, dataSet1.Процессы,
+                    "НаименованиеПроцесса", "Процесс", "Процессы"),
+                new ReferenceCheck(dataSet1.РискиДействия.ID_РискаColumn, dataSet1.Риски,
+                    "НаименованиеРиска", "Риск", "Риски"),
+                new ReferenceCheck(dataSet1.РискиДействия.ID_МероприятияColumn, dataSet11.Мероприятия,
+                    "НаименованиеМероприятия", "Мероприятие", "Мероприятия"),
+                new ReferenceCheck(dataSet1.РискиДействия.ID_ПользователяColumn, dataSet1.Пользователи,
+                    "Фамилия", "Ответственный", "Пользователи"))) return;
 
             if (!SafeUpdate(() => рискиДействияTableAdapter.Update(dataSet1.РискиДействия), "Риски и действия")) return;
 
@@ -179,17 +183,21 @@ namespace RiskiApp
         private void button_Сохранить_Риски_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.Риски)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveРиски());
         }
 
         private bool SaveРиски()
         {
-            // "Риски" ссылается на Мероприятия, Пользователи и ТипыРисков - сохраняем их первыми.
-            if (!SaveМероприятия()) return false;
-            if (!SaveПользователи()) return false;
-            if (!SaveТипыРисков()) return false;
+            if (!ValidateReferences("Риски", dataSet1.Риски,
+                new ReferenceCheck(dataSet1.Риски.ID_ТипаРискаColumn, dataSet1.ТипыРисков,
+                    "НаименованиеТипаРиска", "Тип риска", "Типы рисков"),
+                new ReferenceCheck(dataSet1.Риски.ID_МероприятияColumn, dataSet11.Мероприятия,
+                    "НаименованиеМероприятия", "Мероприятие", "Мероприятия"),
+                new ReferenceCheck(dataSet1.Риски.ID_ПользователяColumn, dataSet1.Пользователи,
+                    "Фамилия", "Ответственный", "Пользователи"))) return false;
+
             return SaveLookup(
                 "Риски",
                 () => рискиTableAdapter1.Update(dataSet1.Риски),
@@ -200,7 +208,7 @@ namespace RiskiApp
         private void button_Сохранить_ТипыРисков_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.ТипыРисков)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveТипыРисков());
         }
@@ -208,7 +216,7 @@ namespace RiskiApp
         private void button_Сохранить_Процессы_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.Процессы)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveПроцессы());
         }
@@ -216,7 +224,7 @@ namespace RiskiApp
         private void button_Сохранить_Периоды_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.Периоды)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveПериоды());
         }
@@ -224,7 +232,7 @@ namespace RiskiApp
         private void button_Сохранить_Подразделения_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.Подразделения)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveПодразделения());
         }
@@ -242,16 +250,17 @@ namespace RiskiApp
         private void button_Сохранить_Пользователи_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet1.Пользователи)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveПользователи());
         }
 
         private bool SaveПользователи()
         {
-            // "Пользователи" ссылается на "Подразделения" - сохраняем подразделения первыми,
-            // иначе временный (ещё не выданный БД) ID подразделения попадёт в БД как внешний ключ.
-            if (!SaveПодразделения()) return false;
+            if (!ValidateReferences("Пользователи", dataSet1.Пользователи,
+                new ReferenceCheck(dataSet1.Пользователи.ID_ПодразделенияColumn, dataSet1.Подразделения,
+                    "НаименованиеПодразделения", "Подразделение", "Подразделения"))) return false;
+
             return SaveLookup(
                 "Пользователи",
                 () => пользователиTableAdapter.Update(dataSet1.Пользователи),
@@ -268,7 +277,7 @@ namespace RiskiApp
         private void button_Сохранить_Мероприятия_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            if (!CanSave()) return;
+            if (!CanSave(dataSet11.Мероприятия)) return;
             _savedRowCount = 0;
             ReportSaveResult(SaveМероприятия());
         }
@@ -294,34 +303,96 @@ namespace RiskiApp
         // Сколько строк реально ушло в БД за текущее нажатие "Сохранить".
         private int _savedRowCount;
 
-        // Все таблицы приложения. "Мероприятия" живёт в отдельном экземпляре набора данных.
-        private IEnumerable<DataTable> AllTables()
+        // Описание внешней ссылки: колонка дочерней таблицы и справочник, на который она указывает.
+        private sealed class ReferenceCheck
         {
-            foreach (DataTable t in dataSet1.Tables) yield return t;
-            yield return dataSet11.Мероприятия;
+            public readonly DataColumn Column;      // например, Пользователи.ID_Подразделения
+            public readonly DataTable Parent;       // Подразделения
+            public readonly string ParentNameColumn;// чем назвать запись в сообщении
+            public readonly string FieldTitle;      // как поле называется для пользователя
+            public readonly string ParentTabTitle;  // куда пользователю идти сохранять
+
+            public ReferenceCheck(DataColumn column, DataTable parent, string parentNameColumn,
+                                  string fieldTitle, string parentTabTitle)
+            {
+                Column = column;
+                Parent = parent;
+                ParentNameColumn = parentNameColumn;
+                FieldTitle = fieldTitle;
+                ParentTabTitle = parentTabTitle;
+            }
+        }
+
+        // Кнопка "Сохранить" на вкладке записывает ТОЛЬКО свою таблицу. Поэтому строка может
+        // ссылаться на запись справочника, которая существует лишь в памяти программы: у такой
+        // записи временный отрицательный ID, и в БД её нет. Раньше это приводило либо к падению
+        // на внешнем ключе, либо (после автосохранения родителей) к записи чужих вкладок в
+        // непредсказуемом порядке. Правильное поведение - отказаться сохранять и объяснить,
+        // что именно мешает.
+        private bool ValidateReferences(string entityName, DataTable table, params ReferenceCheck[] checks)
+        {
+            var problems = new List<string>();
+
+            foreach (DataRow row in table.Rows)
+            {
+                if (row.RowState != DataRowState.Added && row.RowState != DataRowState.Modified)
+                    continue;
+
+                foreach (var check in checks)
+                {
+                    if (row.IsNull(check.Column)) continue;
+
+                    int id = (int)row[check.Column];
+                    DataRow parent = check.Parent.Rows.Find(id);
+
+                    if (parent == null)
+                    {
+                        problems.Add($"• поле \"{check.FieldTitle}\" ссылается на запись, которой больше нет.");
+                        continue;
+                    }
+
+                    if (parent.RowState == DataRowState.Added)
+                    {
+                        string name = parent.IsNull(check.ParentNameColumn)
+                            ? "(без названия)"
+                            : parent[check.ParentNameColumn].ToString();
+
+                        problems.Add(
+                            $"• поле \"{check.FieldTitle}\" ссылается на \"{name}\" - " +
+                            $"эта запись ещё не сохранена в базе данных.\n" +
+                            $"  Откройте вкладку \"{check.ParentTabTitle}\", сохраните её, затем вернитесь сюда.");
+                    }
+                }
+            }
+
+            if (problems.Count == 0) return true;
+
+            MessageBox.Show(
+                $"Не удалось сохранить \"{entityName}\": есть ссылки на несохранённые данные.\n\n" +
+                string.Join("\n", problems.Distinct()),
+                "Сначала сохраните связанные данные",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
         }
 
         // Вызывается перед сохранением. Отвечает на вопрос "почему ничего не произошло":
         // либо в гриде есть строка, которую не удалось зафиксировать, либо менять просто нечего.
-        private bool CanSave()
+        private bool CanSave(DataTable table)
         {
             var problems = new List<string>();
-            foreach (var table in AllTables())
+            foreach (DataRow row in table.GetErrors())
             {
-                foreach (DataRow row in table.GetErrors())
-                {
-                    string columns = string.Join(", ",
-                        row.GetColumnsInError().Select(c => c.ColumnName));
-                    string text = string.IsNullOrEmpty(row.RowError) ? "недопустимое значение" : row.RowError;
-                    problems.Add($"• {table.TableName}" +
-                                 (columns.Length > 0 ? $" (поля: {columns})" : "") + $": {text}");
-                }
+                string columns = string.Join(", ",
+                    row.GetColumnsInError().Select(c => c.ColumnName));
+                string text = string.IsNullOrEmpty(row.RowError) ? "недопустимое значение" : row.RowError;
+                problems.Add($"• {table.TableName}" +
+                             (columns.Length > 0 ? $" (поля: {columns})" : "") + $": {text}");
             }
 
             if (problems.Count > 0)
             {
                 MessageBox.Show(
-                    "Сохранение не выполнено: в таблицах есть строки с ошибками.\n\n" +
+                    "Сохранение не выполнено: в таблице есть строки с ошибками.\n\n" +
                     string.Join("\n", problems) +
                     "\n\nИсправьте отмеченные красным значком строки и повторите сохранение.",
                     "Нельзя сохранить",
@@ -329,7 +400,7 @@ namespace RiskiApp
                 return false;
             }
 
-            if (!dataSet1.HasChanges() && !dataSet11.HasChanges())
+            if (table.GetChanges() == null)
             {
                 // Самый частый случай "нажал - и ничего": строка так и осталась незафиксированной
                 // в гриде, поэтому в наборе данных изменений нет вообще.
