@@ -60,20 +60,25 @@ namespace RiskiApp
             _handlingDataError = true;
             try
             {
-                // Типичный источник ошибки отображения - ячейка-справочник (ComboBox), в которой
-                // лежит ID, отсутствующий в списке: например, временный ID удалённой или уже
-                // перезаписанной записи. Такое значение невозможно отрисовать никогда, поэтому
-                // очищаем его один раз, вместо того чтобы бесконечно ловить одну и ту же ошибку.
+                // Значение ячейки здесь НЕ меняем. Раньше "проблемное" значение молча
+                // затиралось - ошибка пропадала, но вместе с ней пропадал и введённый
+                // пользователем выбор, а сохранение потом тихо уходило в NULL.
+                // Вместо этого запоминаем причину и помечаем ячейку штатным для
+                // DataGridView значком ошибки. Модальных окон здесь быть не должно:
+                // DataError возникает при каждой перерисовке, и MessageBox снова
+                // заблокировал бы интерфейс.
                 var grid = (DataGridView)sender;
-                if (!isEditContext &&
-                    e.RowIndex >= 0 && e.RowIndex < grid.Rows.Count &&
-                    e.ColumnIndex >= 0 && e.ColumnIndex < grid.Columns.Count &&
-                    grid.Columns[e.ColumnIndex] is DataGridViewComboBoxColumn &&
-                    !grid.Rows[e.RowIndex].IsNewRow)
+                string columnName = e.ColumnIndex >= 0 && e.ColumnIndex < grid.Columns.Count
+                    ? grid.Columns[e.ColumnIndex].HeaderText
+                    : "?";
+
+                _lastDataError = $"Таблица \"{grid.Tag ?? grid.Name}\", столбец \"{columnName}\": " +
+                                 (e.Exception != null ? e.Exception.Message : "недопустимое значение");
+
+                if (e.RowIndex >= 0 && e.RowIndex < grid.Rows.Count &&
+                    e.ColumnIndex >= 0 && e.ColumnIndex < grid.Columns.Count)
                 {
-                    var cell = grid.Rows[e.RowIndex].Cells[e.ColumnIndex];
-                    if (cell.Value != null && cell.Value != DBNull.Value)
-                        cell.Value = DBNull.Value;
+                    grid.Rows[e.RowIndex].Cells[e.ColumnIndex].ErrorText = _lastDataError;
                 }
             }
             catch
@@ -85,6 +90,10 @@ namespace RiskiApp
                 _handlingDataError = false;
             }
         }
+
+        // Последняя ошибка привязки данных. Показывается пользователю не сразу (иначе вернётся
+        // бесконечный поток окон), а при попытке сохранения - когда объяснение реально нужно.
+        private string _lastDataError;
 
         private void splitContainer1_Panel1_Paint(object sender, PaintEventArgs e)
         {
@@ -144,6 +153,8 @@ namespace RiskiApp
         private void button_Сохранить_РискиДействия_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
             // Сначала сохраняем все таблицы, на которые ссылается "РискиДействия" (через FK).
             // Это исключает попытку записать в БД ссылку на несохранённую (существующую только
             // в памяти программы) запись - иначе SQL Server вернёт ошибку внешнего ключа и приложение упадёт.
@@ -156,13 +167,21 @@ namespace RiskiApp
             if (!SaveРиски()) return;
 
             if (!SafeUpdate(() => рискиДействияTableAdapter.Update(dataSet1.РискиДействия), "Риски и действия")) return;
+
+            // Перечитывание не является сохранением - его строки не должны попасть в счётчик.
+            int saved = _savedRowCount;
             SafeUpdate(() => рискиДействияTableAdapter.Fill(dataSet1.РискиДействия), "Риски и действия");
+            _savedRowCount = saved;
+
+            ReportSaveResult(true);
         }
 
         private void button_Сохранить_Риски_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveРиски();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveРиски());
         }
 
         private bool SaveРиски()
@@ -181,25 +200,33 @@ namespace RiskiApp
         private void button_Сохранить_ТипыРисков_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveТипыРисков();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveТипыРисков());
         }
 
         private void button_Сохранить_Процессы_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveПроцессы();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveПроцессы());
         }
 
         private void button_Сохранить_Периоды_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveПериоды();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveПериоды());
         }
 
         private void button_Сохранить_Подразделения_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveПодразделения();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveПодразделения());
         }
 
         private bool SaveПодразделения()
@@ -215,7 +242,9 @@ namespace RiskiApp
         private void button_Сохранить_Пользователи_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveПользователи();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveПользователи());
         }
 
         private bool SaveПользователи()
@@ -239,7 +268,9 @@ namespace RiskiApp
         private void button_Сохранить_Мероприятия_Click(object sender, EventArgs e)
         {
             CommitPendingEdits();
-            SaveМероприятия();
+            if (!CanSave()) return;
+            _savedRowCount = 0;
+            ReportSaveResult(SaveМероприятия());
         }
 
         // Значение ячейки, которую пользователь редактирует прямо сейчас, ещё не перенесено
@@ -260,13 +291,81 @@ namespace RiskiApp
             }
         }
 
+        // Сколько строк реально ушло в БД за текущее нажатие "Сохранить".
+        private int _savedRowCount;
+
+        // Все таблицы приложения. "Мероприятия" живёт в отдельном экземпляре набора данных.
+        private IEnumerable<DataTable> AllTables()
+        {
+            foreach (DataTable t in dataSet1.Tables) yield return t;
+            yield return dataSet11.Мероприятия;
+        }
+
+        // Вызывается перед сохранением. Отвечает на вопрос "почему ничего не произошло":
+        // либо в гриде есть строка, которую не удалось зафиксировать, либо менять просто нечего.
+        private bool CanSave()
+        {
+            var problems = new List<string>();
+            foreach (var table in AllTables())
+            {
+                foreach (DataRow row in table.GetErrors())
+                {
+                    string columns = string.Join(", ",
+                        row.GetColumnsInError().Select(c => c.ColumnName));
+                    string text = string.IsNullOrEmpty(row.RowError) ? "недопустимое значение" : row.RowError;
+                    problems.Add($"• {table.TableName}" +
+                                 (columns.Length > 0 ? $" (поля: {columns})" : "") + $": {text}");
+                }
+            }
+
+            if (problems.Count > 0)
+            {
+                MessageBox.Show(
+                    "Сохранение не выполнено: в таблицах есть строки с ошибками.\n\n" +
+                    string.Join("\n", problems) +
+                    "\n\nИсправьте отмеченные красным значком строки и повторите сохранение.",
+                    "Нельзя сохранить",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+            if (!dataSet1.HasChanges() && !dataSet11.HasChanges())
+            {
+                // Самый частый случай "нажал - и ничего": строка так и осталась незафиксированной
+                // в гриде, поэтому в наборе данных изменений нет вообще.
+                string reason = _lastDataError != null
+                    ? "\n\nПоследняя ошибка ввода:\n" + _lastDataError
+                    : "\n\nЕсли вы только что заполняли строку, убедитесь, что ввод в ячейке " +
+                      "завершён (нажмите Enter или перейдите на другую строку).";
+
+                MessageBox.Show(
+                    "Нет изменений для сохранения." + reason,
+                    "Сохранение", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+
+            return true;
+        }
+
+        // Итоговый отчёт. Пользователь всегда должен узнать, что именно произошло.
+        private void ReportSaveResult(bool success)
+        {
+            if (!success) return; // об ошибке уже сообщил SafeUpdate
+
+            MessageBox.Show(
+                _savedRowCount > 0
+                    ? $"Сохранено записей: {_savedRowCount}."
+                    : "Изменения не потребовались: в базе данных уже актуальные данные.",
+                "Сохранение", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
         // Показывает понятное сообщение вместо падения программы при ошибке сохранения
         // (например, если запись ссылается на несохранённые данные в связанной таблице).
-        private bool SafeUpdate(Action updateAction, string entityName)
+        private bool SafeUpdate(Func<int> updateAction, string entityName)
         {
             try
             {
-                updateAction();
+                _savedRowCount += updateAction();
                 return true;
             }
             catch (Exception ex)
@@ -295,7 +394,7 @@ namespace RiskiApp
         // ссылающиеся колонки вручную.
         private bool SaveLookup(
             string entityName,
-            Action updateAction,
+            Func<int> updateAction,
             DataTable parentTable,
             string idColumnName,
             params DataColumn[] childForeignKeys)
